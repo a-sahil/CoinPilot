@@ -1,30 +1,14 @@
 import React, { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
-import { Buffer } from "buffer";
-
-// Define Keplr interfaces
-interface KeplrAccount {
-  address: string;
-  algo: string;
-  pubkey: Uint8Array;
-}
 
 declare global {
   interface Window {
-    keplr?: {
-      enable: (chainId: string) => Promise<void>;
-      getOfflineSigner: (chainId: string) => {
-        getAccounts: () => Promise<KeplrAccount[]>;
-        signAmino: (signerAddress: string, signDoc: any) => Promise<any>;
-      };
-    };
+    keplr?: any;
   }
 }
 
 interface KeplrWalletProps {
-  onConnect?: (address: string, userId: string, pubKey: string) => void;
+  onConnect?: (address: string, userId: string) => void;
   apiBaseUrl?: string;
 }
 
@@ -33,90 +17,107 @@ const KeplrWallet: React.FC<KeplrWalletProps> = ({
   apiBaseUrl = "http://localhost:8000/api"
 }) => {
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
-  const [pubKey, setPubKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
-  const chainId = "injective-888"; // Injective Testnet chain ID
-  
-  // Check if wallet was previously connected
+  // Chain ID for Injective
+  const chainId = "injective-888";
+
+  // Check if wallet is already connected
   useEffect(() => {
-    const savedAddress = localStorage.getItem('walletAddress');
-    const savedUserId = localStorage.getItem('userId');
+    const storedAddress = localStorage.getItem('walletAddress');
+    const storedUserId = localStorage.getItem('userId');
     
-    if (savedAddress && savedUserId) {
-      setWalletAddress(savedAddress);
+    if (storedAddress) {
+      setWalletAddress(storedAddress);
       
-      // Try to reconnect with Keplr if it's available
-      if (window.keplr) {
-        reconnectKeplr(savedAddress, savedUserId);
+      // If we have both address and userId, call onConnect
+      if (storedUserId && onConnect) {
+        console.log("Reconnecting with stored credentials");
+        onConnect(storedAddress, storedUserId);
       }
     }
-  }, []);
-  
-  // Reconnect to Keplr without user interaction
-  const reconnectKeplr = async (savedAddress: string, savedUserId: string) => {
+  }, [onConnect]);
+
+  /**
+   * Send tokens using Keplr wallet
+   * @param amount Amount to send (as string)
+   * @param toAddress Recipient address
+   * @returns Transaction result
+   */
+  const sendTokens = async (amount: string, toAddress: string) => {
     try {
-      await window.keplr?.enable(chainId);
-      const offlineSigner = window.keplr?.getOfflineSigner(chainId);
+      setStatus("Preparing transaction...");
       
-      if (!offlineSigner) return;
-      
+      if (!window.keplr) {
+        throw new Error("Keplr extension is not installed");
+      }
+
+      // Enable chain
+      await window.keplr.enable(chainId);
+      const offlineSigner = window.keplr.getOfflineSigner(chainId);
       const accounts = await offlineSigner.getAccounts();
-      const currentAddress = accounts[0]?.address;
       
-      // Make sure the saved address matches the current Keplr address
-      if (currentAddress && currentAddress === savedAddress) {
-        // Get and save the public key
-        const pubKeyBase64 = Buffer.from(accounts[0].pubkey).toString('base64');
-        setPubKey(pubKeyBase64);
-        localStorage.setItem('walletPubKey', pubKeyBase64);
-        
-        // Notify parent component
-        onConnect?.(savedAddress, savedUserId, pubKeyBase64);
+      if (!accounts || accounts.length === 0) {
+        throw new Error("No accounts found in Keplr wallet");
       }
-    } catch (e) {
-      console.error("Error reconnecting to Keplr:", e);
-      // Don't show error to user on auto-reconnect attempt
-    }
-  };
+      
+      const fromAddress = accounts[0].address;
+      
+      // Parse amount to a number
+      const amountValue = parseFloat(amount);
+      if (isNaN(amountValue) || amountValue <= 0) {
+        throw new Error("Invalid amount");
+      }
 
-  // Find or create user by address
-  const findOrCreateUser = async (address: string): Promise<any> => {
-    try {
-      setStatus("Checking if user exists...");
-      
-      // First try to find the user
-      const findResponse = await fetch(`${apiBaseUrl}/users/${address}`);
-      
-      if (findResponse.ok) {
-        const userData = await findResponse.json();
-        console.log('User found:', userData);
-        return userData;
-      }
-      
-      // If user not found, create a new one
-      setStatus("Creating new user...");
-      const createResponse = await fetch(`${apiBaseUrl}/users`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ address }),
-      });
+      setStatus("Requesting approval...");
 
-      if (!createResponse.ok) {
-        const errorData = await createResponse.json();
-        throw new Error(errorData.error || 'Failed to create user');
-      }
+      // Convert to the smallest unit (for INJ it would be 10^18 units)
+      const amountInSmallestUnit = Math.floor(amountValue * 10**18).toString();
+
+      // Prepare transaction
+      const sendMsg = {
+        typeUrl: "/cosmos.bank.v1beta1.MsgSend",
+        value: {
+          fromAddress: fromAddress,
+          toAddress: toAddress,
+          amount: [
+            {
+              denom: "inj",
+              amount: amountInSmallestUnit
+            }
+          ]
+        }
+      };
+
+      // Set transaction fee
+      const fee = {
+        amount: [{ denom: "inj", amount: "500000000000000" }], // 0.0005 INJ
+        gas: "200000"
+      };
+
+      // Sign and broadcast the transaction
+      const txBytes = Buffer.from(JSON.stringify(sendMsg));
       
-      const userData = await createResponse.json();
-      console.log('User created successfully:', userData);
+      setStatus("Sending transaction...");
       
-      return userData;
-    } catch (error: any) {
-      console.error('Error finding/creating user:', error);
+      const result = await window.keplr.sendTx(
+        chainId,
+        txBytes,
+        "BROADCAST_MODE_BLOCK", // Wait for confirmation
+        {
+          fee: fee,
+          memo: "DCA Transaction"
+        }
+      );
+
+      console.log("Transaction successful:", result);
+      setStatus(null);
+      return result;
+    } catch (error) {
+      console.error("Error sending tokens with Keplr:", error);
+      setStatus(null);
       throw error;
     }
   };
@@ -139,30 +140,47 @@ const KeplrWallet: React.FC<KeplrWalletProps> = ({
       if (accounts.length > 0) {
         const address = accounts[0].address;
         setWalletAddress(address);
+        setStatus("Registering user...");
         
-        // Get and save the public key
-        const pubKeyBase64 = Buffer.from(accounts[0].pubkey).toString('base64');
-        setPubKey(pubKeyBase64);
-        localStorage.setItem('walletPubKey', pubKeyBase64);
-        
-        // Find or create user in database
-        const userData = await findOrCreateUser(address);
-        
-        if (userData && userData._id) {
-          // Save user data to localStorage for persistence
+        try {
+          // Register the user with the backend
+          const response = await fetch(`${apiBaseUrl}/users`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ address }),
+          });
+
+          if (!response.ok) {
+            throw new Error(`Failed to register user: ${response.status}`);
+          }
+
+          const userData = await response.json();
+          console.log('User registered successfully:', userData);
+          
+          if (!userData._id) {
+            throw new Error('Server did not return a valid user ID');
+          }
+          
+          // Store user data in localStorage
           localStorage.setItem('walletAddress', address);
           localStorage.setItem('userId', userData._id);
           
-          // Notify parent component
-          onConnect?.(address, userData._id, pubKeyBase64);
-        } else {
-          throw new Error("User data missing MongoDB ID");
+          // Call onConnect with the address and userId
+          if (onConnect) {
+            onConnect(address, userData._id);
+          }
+        } catch (err) {
+          console.error('Error registering user:', err);
+          setError(`Failed to register user: ${(err as Error).message}`);
+          setWalletAddress(null);
         }
       } else {
         setError("Failed to retrieve accounts from Keplr.");
       }
-    } catch (e: any) {
-      setError("An error occurred: " + e.message);
+    } catch (e) {
+      setError("An error occurred: " + (e as Error).message);
       setWalletAddress(null);
     } finally {
       setIsLoading(false);
@@ -170,53 +188,64 @@ const KeplrWallet: React.FC<KeplrWalletProps> = ({
     }
   };
 
-  return (
-    <Card className="w-full max-w-md mx-auto">
-      <CardContent className="pt-6">
-        {walletAddress ? (
-          <div className="text-center">
-            <p className="mb-2 text-sm font-medium text-muted-foreground">Connected:</p>
-            <p className="font-mono text-xs truncate bg-muted p-2 rounded mb-4">
-              {walletAddress}
-            </p>
-            <Button 
-              variant="outline" 
-              size="sm"
-              onClick={() => {
-                localStorage.removeItem('walletAddress');
-                localStorage.removeItem('userId');
-                localStorage.removeItem('walletPubKey');
-                setWalletAddress(null);
-                setPubKey(null);
-              }}
-            >
-              Disconnect
-            </Button>
-          </div>
-        ) : (
-          <Button
-            className="w-full"
-            onClick={connectKeplrWallet}
-            disabled={isLoading}
-          >
-            {isLoading ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                {status || "Connecting..."}
-              </>
-            ) : (
-              "Connect Wallet"
-            )}
-          </Button>
-        )}
+  // Function to disconnect wallet
+  const disconnectWallet = () => {
+    localStorage.removeItem('walletAddress');
+    localStorage.removeItem('userId');
+    setWalletAddress(null);
+    window.location.reload(); // Reload to reset all states
+  };
 
-        {error && (
-          <p className="mt-4 text-sm text-destructive text-center">
-            {error}
-          </p>
-        )}
-      </CardContent>
-    </Card>
+  // Add the sendTokens function to the window object so it can be accessed from other components
+  useEffect(() => {
+    // Add the function to window for global access
+    if (typeof window !== 'undefined') {
+      (window as any).keplrSendTokens = sendTokens;
+    }
+
+    // Cleanup on unmount
+    return () => {
+      if (typeof window !== 'undefined') {
+        delete (window as any).keplrSendTokens;
+      }
+    };
+  }, []);
+
+  return (
+    <div>
+      {walletAddress ? (
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-400">
+            {`${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`}
+          </span>
+          <button
+            onClick={disconnectWallet}
+            className="text-xs text-red-400 hover:text-red-300"
+          >
+            Disconnect
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={connectKeplrWallet}
+          disabled={isLoading}
+          className="w-full px-4 py-2 text-sm font-medium text-white bg-white/10 hover:bg-white/20 rounded-lg transition-colors disabled:opacity-50"
+        >
+          {isLoading ? (
+            <>
+              <Loader2 className="inline mr-2 h-4 w-4 animate-spin" />
+              {status || "Connecting..."}
+            </>
+          ) : (
+            "Connect Wallet"
+          )}
+        </button>
+      )}
+      
+      {error && (
+        <p className="mt-2 text-xs text-red-400">{error}</p>
+      )}
+    </div>
   );
 };
 
