@@ -1,6 +1,8 @@
 # CoinPilot - Crypto DCA Service
 
-CoinPilot is a Dollar Cost Averaging (DCA) service that enables automated periodic investments on multiple blockchain platforms, currently supporting Injective and TON.
+CoinPilot is a Dollar Cost Averaging (DCA) service that enables automated periodic investments on multiple blockchain platforms, currently supporting Injective Only.
+
+[Deck](https://tome.app/instruere/coinpilot-cm1x7wqfc1yrlmsl12c4nhwrh)
 
 ## Features
 
