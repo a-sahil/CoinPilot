@@ -42,6 +42,48 @@ const ViewDCAPlans: React.FC<ViewDCAPlansProps> = ({
   const [totalInvestment, setTotalInvestment] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedPlan, setSelectedPlan] = useState<DCAPlan | null>(null);
+  const [cancellingPlanId, setCancellingPlanId] = useState<string | null>(null);
+
+  // Function to handle plan cancellation
+  const handleCancelPlan = async (planId: string) => {
+    if (!confirm("Are you sure you want to cancel this DCA plan? This action cannot be undone.")) {
+      return;
+    }
+    
+    try {
+      setCancellingPlanId(planId);
+      
+      const response = await fetch(`${apiBaseUrl}/dca/plans/${planId}/stop`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to stop plan');
+      }
+
+      // Update the local state to reflect the cancelled plan
+      setPlans(prevPlans => prevPlans.map(plan => 
+        plan.id === planId ? { ...plan, status: 'inactive' } : plan
+      ));
+
+      // Calculate updated total investment
+      const updatedTotalInvestment = plans
+        .filter(plan => plan.id !== planId || plan.status !== 'active')
+        .reduce((sum, plan) => sum + plan.amount, 0);
+      
+      setTotalInvestment(updatedTotalInvestment);
+      
+    } catch (err) {
+      console.error('Error cancelling plan:', err);
+      setError(`Failed to cancel plan: ${(err as Error).message}`);
+    } finally {
+      setCancellingPlanId(null);
+    }
+  };
 
   useEffect(() => {
     const effectiveUserId = userId || localStorage.getItem('userId');
@@ -105,13 +147,13 @@ const ViewDCAPlans: React.FC<ViewDCAPlansProps> = ({
             setTotalInvestment(totalValue);
           } else {
             // If total investment endpoint fails, calculate from plans
-            const totalFromPlans = plansData.reduce((sum: number, plan: { amount: any; }) => sum + parseFloat(plan.amount || 0), 0);
+            const totalFromPlans = plansData.reduce((sum, plan) => sum + parseFloat(plan.amount || 0), 0);
             setTotalInvestment(totalFromPlans);
           }
         } catch (investErr) {
           console.error("Error fetching investment data:", investErr);
           // Calculate from plans as fallback
-          const totalFromPlans = plansData.reduce((sum: number, plan: { amount: any; }) => sum + parseFloat(plan.amount || 0), 0);
+          const totalFromPlans = plansData.reduce((sum, plan) => sum + parseFloat(plan.amount || 0), 0);
           setTotalInvestment(totalFromPlans);
         }
         
@@ -128,7 +170,7 @@ const ViewDCAPlans: React.FC<ViewDCAPlansProps> = ({
           interval: 1,
           risk: "low",
           toAddress: "inj1wmm1uump3mtt34e0j3p2gqjxks98rpnywy8lzh",
-          transactionHash: "5891536707AC677088CB2227EFE319D72670D597FB599228A86EA76FE4BD22FA",
+          transactionHash: "0x7a9dce828e5761a887cfe6f0b29e98c21c9581f69d13fed35f9a966db0a1a77f",
           tokenDenom: "USDT",
           createdAt: new Date().toISOString(),
           status: "active"
@@ -251,7 +293,7 @@ const ViewDCAPlans: React.FC<ViewDCAPlansProps> = ({
                     <th className="text-left py-4 px-6 font-medium">Recipient</th>
                     <th className="text-left py-4 px-6 font-medium">Created</th>
                     <th className="text-left py-4 px-6 font-medium">Status</th>
-                    {/* <th className="text-left py-4 px-6 font-medium">Next Execution</th> */}
+                    <th className="text-left py-4 px-6 font-medium">Next Execution</th>
                     <th className="text-left py-4 px-6 font-medium">Actions</th>
                   </tr>
                 </thead>
@@ -279,16 +321,27 @@ const ViewDCAPlans: React.FC<ViewDCAPlansProps> = ({
                       <td className="py-4 px-6">
                         {renderStatus(plan.status)}
                       </td>
-                      {/* <td className="py-4 px-6">
+                      <td className="py-4 px-6">
                         {"-"}
-                      </td> */}
+                      </td>
                       <td className="py-4 px-6">
                         <div className="flex space-x-2">
                           <button className="px-3 py-1 hover:bg-gray-700 rounded">
                             Pause
                           </button>
-                          <button className="px-3 py-1 text-red-400 hover:bg-red-900/30 rounded">
-                            Cancel
+                          <button 
+                            className="px-3 py-1 text-red-400 hover:bg-red-900/30 rounded"
+                            onClick={() => handleCancelPlan(plan.id)}
+                            disabled={cancellingPlanId === plan.id}
+                          >
+                            {cancellingPlanId === plan.id ? (
+                              <span className="flex items-center">
+                                <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                                Cancelling...
+                              </span>
+                            ) : (
+                              "Cancel"
+                            )}
                           </button>
                         </div>
                       </td>
@@ -325,10 +378,7 @@ const ViewDCAPlans: React.FC<ViewDCAPlansProps> = ({
                   console.log("Resume plan:", id);
                   setSelectedPlan(null);
                 }}
-                onCancel={(id) => {
-                  console.log("Cancel plan:", id);
-                  setSelectedPlan(null);
-                }}
+                onCancel={handleCancelPlan}
               />
             )}
           </div>
