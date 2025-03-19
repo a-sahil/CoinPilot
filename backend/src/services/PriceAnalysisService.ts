@@ -117,7 +117,7 @@ export async function analyzeTokenPrice(tokenId: string = 'injective-protocol'):
           - If price is rising (positive price change %), return a number between 1 and 2:
             * For minimal price increases (0-3%), return a number close to 1 (1.0-1.3)
             * For moderate price increases (3-10%), return a mid-range number (1.3-1.7)
-            * For significant price increases (>10%), return a number close to 2 (1.7-1.9)
+            * For significant price increases (>10%), return a number close to 2 (1.8-1.9)
           
           Only return the number as a JSON object with a single field called "priceFactor". Nothing else.`
         },
