@@ -5,7 +5,11 @@ import { InvestmentPlan, IInvestmentPlan, RiskLevel } from '../models/Investment
 import { User, IUser } from '../models/User';
 import cron from 'node-cron';
 import { logger } from '../utils/logger';
+<<<<<<< Updated upstream
 import { analyzeTokenPrice, getRiskMultiplier } from './PriceAnalysisService';
+=======
+import { analyzeTokenPrice, getRiskMultiplier } from './PricaAnalysisService';
+>>>>>>> Stashed changes
 
 export class DCAService {
   private plugin: DCAPlugin;
